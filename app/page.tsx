@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import ConditionBuilder, { Condition, JoinClause, OrderByClause } from "./components/page";
+import ConditionBuilder, { Condition, JoinClause, OrderByClause } from "./components/condition-builder";
 
 
 type SQLOperation = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
