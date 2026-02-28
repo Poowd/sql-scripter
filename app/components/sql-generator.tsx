@@ -63,7 +63,7 @@ export default function SQLGeneratorPage() {
       try {
         const raw = JSON.parse(ev.target?.result as string);
         if (!isValidSchema(raw)) {
-          showToast("error", "Invalid file: not a SQL Forge query");
+          showToast("error", "Invalid file: not a Quelder query");
           return;
         }
         setRoot(raw.root);
@@ -121,7 +121,7 @@ export default function SQLGeneratorPage() {
             <span className="text-[#58a6ff] text-base">⬡</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold text-[#e6edf3] tracking-wide">SQL FORGE</h1>
+            <h1 className="text-sm font-bold text-[#e6edf3] tracking-wide">Quelder</h1>
             <p className="text-[10px] text-[#484f58] tracking-widest uppercase">Query Builder</p>
           </div>
         </div>
