@@ -1,29 +1,26 @@
 // sqlBuilder.ts — recursive SQL generator from QueryNode tree
 
-import { Condition, QueryNode } from "./types";
+import { QueryNode, Condition, ColumnValuePair } from "./types";
 
-
-function genId() {
+export function genId(): string {
   return Math.random().toString(36).slice(2, 9);
 }
 
-export function genId2() {
-  return genId();
+// Format a value based on its type: strings get quoted, numbers don't
+function formatValue(value: string, valueType: "string" | "number"): string {
+  if (valueType === "number") return value || "0";
+  return `'${value}'`;
 }
 
 export function buildSQL(node: QueryNode, depth = 0): string {
   const indent = "  ".repeat(depth);
-  const inner = "  ".repeat(depth + 1);
+  const inner  = "  ".repeat(depth + 1);
 
   switch (node.operation) {
-    case "SELECT":
-      return buildSelect(node, depth, indent, inner);
-    case "INSERT":
-      return buildInsert(node);
-    case "UPDATE":
-      return buildUpdate(node, depth, indent, inner);
-    case "DELETE":
-      return buildDelete(node, depth, indent, inner);
+    case "SELECT": return buildSelect(node, depth, indent, inner);
+    case "INSERT": return buildInsert(node);
+    case "UPDATE": return buildUpdate(node, depth, indent, inner);
+    case "DELETE": return buildDelete(node, depth, indent, inner);
   }
 }
 
@@ -34,13 +31,13 @@ function resolveConditionValue(
 ): string {
   if (cond.subQueryId && subQueries[cond.subQueryId]) {
     const subSQL = buildSQL(subQueries[cond.subQueryId], depth + 2);
-    const indented = subSQL
-      .split("\n")
+    const lines = subSQL.split("\n");
+    const indented = lines
       .map((l, i) => (i === 0 ? l : "  ".repeat(depth + 2) + l))
       .join("\n");
     return `(\n${"  ".repeat(depth + 2)}${indented}\n${"  ".repeat(depth + 1)})`;
   }
-  return `'${cond.value}'`;
+  return formatValue(cond.value, cond.valueType);
 }
 
 function buildWhereClause(
@@ -52,37 +49,40 @@ function buildWhereClause(
 ): string {
   if (conditions.length === 0) return "";
 
-  const parts = conditions
-    .map((c, i) => {
-      const col = c.column || "column";
-      const isSubQuery = !!c.subQueryId;
-      const isNullOp = ["IS NULL", "IS NOT NULL"].includes(c.operator);
-      const isExistsOp = ["EXISTS", "NOT EXISTS"].includes(c.operator);
+  const parts = conditions.map((c, i) => {
+    const col       = c.column || "column";
+    const isNullOp  = ["IS NULL", "IS NOT NULL"].includes(c.operator);
+    const isExists  = ["EXISTS", "NOT EXISTS"].includes(c.operator);
 
-      let clause: string;
-      if (isExistsOp) {
-        const val = resolveConditionValue(c, subQueries, depth);
-        clause = `${c.operator} ${val}`;
-      } else if (isNullOp) {
-        clause = `${col} ${c.operator}`;
-      } else if (isSubQuery) {
-        const val = resolveConditionValue(c, subQueries, depth);
-        clause = `${col} ${c.operator} ${val}`;
-      } else {
-        clause = `${col} ${c.operator} '${c.value}'`;
-      }
+    let clause: string;
+    if (isExists) {
+      clause = `${c.operator} ${resolveConditionValue(c, subQueries, depth)}`;
+    } else if (isNullOp) {
+      clause = `${col} ${c.operator}`;
+    } else if (c.subQueryId) {
+      clause = `${col} ${c.operator} ${resolveConditionValue(c, subQueries, depth)}`;
+    } else {
+      clause = `${col} ${c.operator} ${formatValue(c.value, c.valueType)}`;
+    }
 
-      return i === 0 ? clause : `${c.logic} ${clause}`;
-    })
-    .join(`\n${inner}`);
+    return i === 0 ? clause : `${c.logic} ${clause}`;
+  }).join(`\n${inner}`);
 
   return `\n${indent}WHERE ${parts}`;
 }
 
+function buildGroupByClause(node: QueryNode, indent: string): string {
+  const cols = node.groupBy.filter((g) => g.column).map((g) => g.column);
+  if (cols.length === 0) return "";
+  return `\n${indent}GROUP BY ${cols.join(", ")}`;
+}
+
 function buildSelect(node: QueryNode, depth: number, indent: string, inner: string): string {
   if (!node.table) return `${indent}-- Please fill in the table name`;
-  const cols = node.selectColumns.trim() || "*";
-  let sql = `SELECT ${cols}\n${indent}FROM ${node.table}`;
+
+  const cols     = node.selectColumns.trim() || "*";
+  const distinct = node.distinct ? "DISTINCT " : "";
+  let sql = `SELECT ${distinct}${cols}\n${indent}FROM ${node.table}`;
 
   for (const j of node.joins) {
     if (j.table && j.onLeft && j.onRight)
@@ -90,12 +90,12 @@ function buildSelect(node: QueryNode, depth: number, indent: string, inner: stri
   }
 
   sql += buildWhereClause(node.conditions, node.subQueries, depth, indent, inner);
+  sql += buildGroupByClause(node, indent);
 
-  if (node.orderBy.length > 0) {
-    const cols = node.orderBy.filter((o) => o.column).map((o) => `${o.column} ${o.direction}`).join(", ");
-    if (cols) sql += `\n${indent}ORDER BY ${cols}`;
-  }
+  const orderCols = node.orderBy.filter((o) => o.column).map((o) => `${o.column} ${o.direction}`);
+  if (orderCols.length > 0) sql += `\n${indent}ORDER BY ${orderCols.join(", ")}`;
   if (node.limit) sql += `\n${indent}LIMIT ${node.limit}`;
+
   return sql + ";";
 }
 
@@ -104,7 +104,7 @@ function buildInsert(node: QueryNode): string {
   const filled = node.pairs.filter((p) => p.column);
   if (filled.length === 0) return "-- Add at least one column";
   const cols = filled.map((p) => p.column).join(", ");
-  const vals = filled.map((p) => `'${p.value}'`).join(", ");
+  const vals = filled.map((p) => formatValue(p.value, p.valueType)).join(", ");
   return `INSERT INTO ${node.table} (${cols})\nVALUES (${vals});`;
 }
 
@@ -112,7 +112,7 @@ function buildUpdate(node: QueryNode, depth: number, indent: string, inner: stri
   if (!node.table) return `${indent}-- Please fill in the table name`;
   const filled = node.pairs.filter((p) => p.column);
   if (filled.length === 0) return `${indent}-- Add at least one SET column`;
-  const sets = filled.map((p) => `${inner}${p.column} = '${p.value}'`).join(",\n");
+  const sets = filled.map((p) => `${inner}${p.column} = ${formatValue(p.value, p.valueType)}`).join(",\n");
   let sql = `UPDATE ${node.table}\n${indent}SET\n${sets}`;
   sql += buildWhereClause(node.conditions, node.subQueries, depth, indent, inner);
   return sql + ";";
@@ -127,13 +127,15 @@ function buildDelete(node: QueryNode, depth: number, indent: string, inner: stri
 
 export function makeEmptyNode(operation: QueryNode["operation"] = "SELECT"): QueryNode {
   return {
-    id: Math.random().toString(36).slice(2, 9),
+    id: genId(),
     operation,
     table: "",
     selectColumns: "*",
-    pairs: [{ id: Math.random().toString(36).slice(2, 9), column: "", value: "" }],
+    distinct: false,
+    pairs: [{ id: genId(), column: "", value: "", valueType: "string" }],
     conditions: [],
     joins: [],
+    groupBy: [],
     orderBy: [],
     limit: "",
     subQueries: {},

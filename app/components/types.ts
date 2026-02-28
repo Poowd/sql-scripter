@@ -8,15 +8,15 @@ export type Operator =
 
 export type LogicGate = "AND" | "OR";
 export type SQLOperation = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
+export type ValueType = "string" | "number";
 
-// A single flat WHERE condition (value can be a literal or a subquery id)
 export interface Condition {
   id: string;
   column: string;
   operator: Operator;
   value: string;
+  valueType: ValueType;   // whether value is quoted string or raw number
   logic: LogicGate;
-  // If set, this condition's value is a nested subquery instead of a literal
   subQueryId?: string;
 }
 
@@ -34,10 +34,16 @@ export interface OrderByClause {
   direction: "ASC" | "DESC";
 }
 
+export interface GroupByClause {
+  id: string;
+  column: string;
+}
+
 export interface ColumnValuePair {
   id: string;
   column: string;
   value: string;
+  valueType: ValueType;   // whether value is quoted string or raw number
 }
 
 // A full query node (used for main query AND for nested subqueries)
@@ -46,12 +52,13 @@ export interface QueryNode {
   operation: SQLOperation;
   table: string;
   selectColumns: string;
+  distinct: boolean;          // SELECT DISTINCT
   pairs: ColumnValuePair[];
   conditions: Condition[];
   joins: JoinClause[];
+  groupBy: GroupByClause[];   // GROUP BY columns
   orderBy: OrderByClause[];
   limit: string;
-  // Child subquery nodes keyed by their id (used as subquery values in conditions)
   subQueries: Record<string, QueryNode>;
 }
 
